@@ -21,5 +21,5 @@ Pythia provides *statistical correctness guarantees* for fuzzing campaigns (corr
 * **correctness**: shows an upper bound on the probability to expose a unique crash if no crashes have been found. The number is fairly representative of fuzzing campaigns of similar length, assuming AFL is started with the same seeds, parameters, and test driver. 
 * **difficulty**: shows how "difficult" it is to discover new paths in that program. Difficulty is a program property where programs with difficulty 0 are extremely difficult to fuzz while programs with difficulty 1 are extremely easy to fuzz.
 
-If there is enough interest, I'll put up a technical report explaining the research behind this.
+If there is enough interest, I'll put up a technical report explaining the research behind this.<br/>
 Cheers - Marcel
