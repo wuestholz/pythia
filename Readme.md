@@ -12,7 +12,7 @@
 │ uniq crash/hang : 0 / 0                              │   difficulty : 5e-02  │
 </pre>
 
-Pythia provides *statistical correctness guarantees* for fuzzing campaigns (correctness), and quantifies *how difficult* it is to discover paths in a program (difficulty). Pythia also allows to determine the *progress* of the fuzzing campaign is *towards completion* (i.e., path coverage = current paths / total paths). Once about 99% of paths have been discovered, you can abort the fuzzing campaign without expecting too many new discoveries.
+Pythia provides *statistical correctness guarantees* for fuzzing campaigns (correctness), and quantifies *how difficult* it is to discover paths in a program (difficulty). Pythia also allows to determine the *progress* of the fuzzing campaign *towards completion* (i.e., path coverage = current paths / total paths). Once about 99% of paths have been discovered, you can abort the fuzzing campaign without expecting too many new discoveries.
 
 * **current paths**: shows the current number of paths discovered.
 * **1 min paths**: shows the number of paths discovered in the future (1min, 10min, 1hour, 10hrs, and 1d). However, the prediction does not anticipate sudden increases in the number of paths discovered. It expects the path discovery to decelerate at the same speed (approaching an asymptote). The prediction quickly adjusts once the sudden increase has happened.
