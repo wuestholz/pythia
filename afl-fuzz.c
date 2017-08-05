@@ -4120,7 +4120,6 @@ static void show_stats(void) {
 
     q = q->next;
   }
-  long double difficulty = ((long double) shannon / total_inputs) / (long double) LOG2(queued_paths);
 
   u32 exp_total_paths = queued_paths;
   if (doubletons > 0)
@@ -4128,8 +4127,10 @@ static void show_stats(void) {
   else
     exp_total_paths += singletons * (singletons - 1) / 2;
 
+  long double difficulty = 1.0; 
   long double correctness = 1.0;
-  if (total_inputs >= 1) {
+  if (total_inputs > 0 && queued_paths > 1) {
+    difficulty = ((long double) shannon / total_inputs) / (long double) LOG2(queued_paths);
     correctness = (long double) singletons / total_inputs;
   }
  
@@ -6845,7 +6846,7 @@ static void sync_fuzzers(char** argv) {
         syncing_party = 0;
 
         /* Predictions won't work for imports */
-        if (saved) queue_top->n_fuzz = 11;
+        if (saved) queue_top->n_fuzz = 3;
 
         munmap(mem, st.st_size);
 
