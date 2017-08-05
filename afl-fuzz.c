@@ -76,6 +76,11 @@
 #  define EXP_ST static
 #endif /* ^AFL_LIB */
 
+/* The logarithm is needed for computing the fuzzing difficulty. For more information, see
+   https://stackoverflow.com/questions/11376288/fast-computing-of-log2-for-64-bit-integers */
+
+#define LOG2(X) ((unsigned) (8*sizeof (unsigned long long) - __builtin_clzll((X)) - 1))
+
 /* Lots of globals, but mostly for the status UI and other things where it
    really makes no sense to haul them around as function parameters. */
 
@@ -180,7 +185,8 @@ EXP_ST u64 total_crashes,             /* Total number of crashes          */
            bytes_trim_in,             /* Bytes coming into the trimmer    */
            bytes_trim_out,            /* Bytes coming outa the trimmer    */
            blocks_eff_total,          /* Blocks subject to effector maps  */
-           blocks_eff_select;         /* Blocks selected as fuzzable      */
+           blocks_eff_select,         /* Blocks selected as fuzzable      */
+           total_inputs;              /* Total inputs generated           */
 
 static u32 subseq_tmouts;             /* Number of timeouts in a row      */
 
@@ -234,6 +240,7 @@ struct queue_entry {
       var_behavior,                   /* Variable behavior?               */
       favored,                        /* Currently favored?               */
       fs_redundant;                   /* Marked as redundant in the fs?   */
+  u64 n_fuzz;                         /* Number of fuzz, does not overflow */
 
   u32 bitmap_size,                    /* Number of bits set in bitmap     */
       exec_cksum;                     /* Checksum of the execution trace  */
@@ -779,6 +786,7 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->len          = len;
   q->depth        = cur_depth + 1;
   q->passed_det   = passed_det;
+  q->n_fuzz       = 1;
 
   if (q->depth > max_depth) max_depth = q->depth;
 
@@ -3116,6 +3124,20 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
   s32 fd;
   u8  keeping = 0, res;
 
+
+  /* Keep track of singletons and doubletons */
+  u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+
+  struct queue_entry* q = queue;
+  while (q) {
+    if (q->exec_cksum == cksum)
+      q->n_fuzz = q->n_fuzz + 1;
+
+    q = q->next;
+
+  }
+
+
   if (fault == crash_mode) {
 
     /* Keep only if there are new bits in the map, add to queue for
@@ -3356,6 +3378,35 @@ static void find_timeout(void) {
 
 }
 
+#ifdef WRITE_ABUNDANCE
+/* Update abundance file for unattended monitoring. */
+
+static void write_abundance_file() {
+
+  u8* fn = alloc_printf("%s/abundance_stats", out_dir);
+  s32 fd;
+  FILE* f;
+
+  fd = open(fn, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+
+  if (fd < 0) PFATAL("Unable to create '%s'", fn);
+
+  ck_free(fn);
+
+  f = fdopen(fd, "w");
+
+  if (!f) PFATAL("fdopen() failed");
+
+  struct queue_entry* q = queue;
+  while (q) {
+    fprintf(f, "%llu\n", q->n_fuzz);
+    q = q->next;
+  }
+
+  fclose(f);
+
+}
+#endif
 
 /* Update stats file for unattended monitoring. */
 
@@ -3459,14 +3510,22 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
      favored_not_fuzzed, unique_crashes, unique_hangs, max_depth,
      execs_per_sec */
 
+  u32 singletons = 0;
+  u32 doubletons = 0;
+  struct queue_entry* q = queue;
+  while (q) {
+    if (q->n_fuzz == 1) singletons ++;
+    if (q->n_fuzz == 2) doubletons ++;
+    q = q->next;
+  }
+
   fprintf(plot_file, 
-          "%llu, %llu, %u, %u, %u, %u, %0.02f%%, %llu, %llu, %u, %0.02f\n",
+          "%llu, %llu, %u, %u, %u, %u, %0.02f%%, %llu, %llu, %u, %0.02f, %u, %u, %llu\n",
           get_cur_time() / 1000, queue_cycle - 1, current_entry, queued_paths,
           pending_not_fuzzed, pending_favored, bitmap_cvg, unique_crashes,
-          unique_hangs, max_depth, eps); /* ignore errors */
+          unique_hangs, max_depth, eps, singletons, doubletons, total_inputs); /* ignore errors */
 
   fflush(plot_file);
-
 }
 
 
@@ -3911,6 +3970,9 @@ static void show_stats(void) {
 
     last_stats_ms = cur_ms;
     write_stats_file(t_byte_ratio, stab_ratio, avg_exec);
+#ifdef WRITE_ABUNDANCE
+    write_abundance_file();
+#endif
     save_auto();
     write_bitmap();
 
@@ -4041,26 +4103,69 @@ static void show_stats(void) {
 
   }
 
-  SAYF(bSTG bV bSTOP "  total paths : " cRST "%-5s  " bSTG bV "\n",
+  SAYF(bSTG bV bSTOP "current paths : " cRST "%-5s  " bSTG bV "\n",
        DI(queued_paths));
 
+  u32 singletons = 0;
+  u32 doubletons = 0;
+  int shannon = 0;
+
+  struct queue_entry* q = queue;
+  while (q) {
+    if (q->n_fuzz == 1) singletons ++;
+    if (q->n_fuzz == 2) doubletons ++;
+
+    shannon -= q->n_fuzz * (LOG2(q->n_fuzz) - LOG2(total_inputs));
+
+    q = q->next;
+  }
+  long double difficulty = ((long double) shannon / total_inputs) / (long double) LOG2(queued_paths);
+
+  u32 exp_total_paths = queued_paths;
+  if (doubletons > 0)
+    exp_total_paths += singletons * singletons / (2 * doubletons);
+  else
+    exp_total_paths += singletons * (singletons - 1) / 2;
+
+  long double correctness = 1.0;
+  if (total_inputs >= 1) {
+    correctness = (long double) singletons / total_inputs;
+  }
+ 
   /* Highlight crashes in red if found, denote going over the KEEP_UNIQUE_CRASH
      limit with a '+' appended to the count. */
 
+  sprintf(tmp, "%s / %s / %s", DI(singletons), DI(doubletons), DI(total_inputs));
+  SAYF(bV bSTOP " prediction info : " cRST "%-34s ",
+       tmp);
+
+  SAYF(bSTG bV bSTOP "  total paths : " cRST "%-5s  " bSTG bV "\n",
+       DI(exp_total_paths));
+
+  SAYF(bV bSTOP " last uniq crash : " cRST "%-34s ",
+       DTD(cur_ms, last_crash_time));
+
+  sprintf(tmp, "%1.0Le", correctness);
+  SAYF(bSTG bV bSTOP "  correctness : " cRST "%-5s  " bSTG bV "\n",
+       tmp);
+
+  SAYF(bV bSTOP "  last uniq hang : " cRST "%-34s ",
+       DTD(cur_ms, last_hang_time));
+
+  sprintf(tmp, "%1.0Le", difficulty);
+  SAYF(bSTG bV bSTOP "   difficulty : " cRST "%-5s  " bSTG bV "\n",
+       tmp);
+ 
   sprintf(tmp, "%s%s", DI(unique_crashes),
           (unique_crashes >= KEEP_UNIQUE_CRASH) ? "+" : "");
-
-  SAYF(bV bSTOP " last uniq crash : " cRST "%-34s " bSTG bV bSTOP
-       " uniq crashes : %s%-6s " bSTG bV "\n",
-       DTD(cur_ms, last_crash_time), unique_crashes ? cLRD : cRST,
-       tmp);
+  SAYF(bV bSTOP "    uniq crashes : " cRST "%s%-34s ",
+       unique_crashes ? cLRD : cRST, tmp);
 
   sprintf(tmp, "%s%s", DI(unique_hangs),
          (unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
 
-  SAYF(bV bSTOP "  last uniq hang : " cRST "%-34s " bSTG bV bSTOP 
-       "   uniq hangs : " cRST "%-6s " bSTG bV "\n",
-       DTD(cur_ms, last_hang_time), tmp);
+  SAYF(bSTG bV bSTOP "   uniq hangs : " cRST "%-5s  " bSTG bV "\n",
+       tmp);
 
   SAYF(bVR bH bSTOP cCYA " cycle progress " bSTG bH20 bHB bH bSTOP cCYA
        " map coverage " bSTG bH bHT bH20 bH2 bH bVL "\n");
@@ -4599,6 +4704,8 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
   /* This handles FAULT_ERROR for us: */
 
   queued_discovered += save_if_interesting(argv, out_buf, len, fault);
+
+  total_inputs ++;
 
   if (!(stage_cur % stats_update_freq) || stage_cur + 1 == stage_max)
     show_stats();
@@ -6706,8 +6813,12 @@ static void sync_fuzzers(char** argv) {
         if (stop_soon) return;
 
         syncing_party = sd_ent->d_name;
-        queued_imported += save_if_interesting(argv, mem, st.st_size, fault);
+        u8 saved = save_if_interesting(argv, mem, st.st_size, fault);
+        queued_imported += saved;
         syncing_party = 0;
+
+        /* Predictions won't work for imports */
+        if (saved) queue_top->n_fuzz = 11;
 
         munmap(mem, st.st_size);
 
@@ -7165,7 +7276,7 @@ EXP_ST void setup_dirs_fds(void) {
 
   fprintf(plot_file, "# unix_time, cycles_done, cur_path, paths_total, "
                      "pending_total, pending_favs, map_size, unique_crashes, "
-                     "unique_hangs, max_depth, execs_per_sec\n");
+                     "unique_hangs, max_depth, execs_per_sec, singletons, doubletons, tests_total\n");
                      /* ignore errors */
 
 }
@@ -7953,6 +8064,9 @@ int main(int argc, char** argv) {
   seek_to = find_start_position();
 
   write_stats_file(0, 0, 0);
+#ifdef WRITE_ABUNDANCE
+  write_abundance_file();
+#endif
   save_auto();
 
   if (stop_soon) goto stop_fuzzing;
@@ -8029,6 +8143,9 @@ int main(int argc, char** argv) {
 
   write_bitmap();
   write_stats_file(0, 0, 0);
+#ifdef WRITE_ABUNDANCE
+  write_abundance_file();
+#endif
   save_auto();
 
 stop_fuzzing:
