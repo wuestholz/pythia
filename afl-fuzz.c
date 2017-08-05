@@ -45,6 +45,7 @@
 #include <termios.h>
 #include <dlfcn.h>
 #include <sched.h>
+#include <math.h>
 
 #include <sys/wait.h>
 #include <sys/time.h>
@@ -4139,32 +4140,58 @@ static void show_stats(void) {
   SAYF(bV bSTOP " prediction info : " cRST "%-34s ",
        tmp);
 
-  SAYF(bSTG bV bSTOP "  total paths : " cRST "%-5s  " bSTG bV "\n",
-       DI(exp_total_paths));
+  sprintf(tmp, "%s",
+           cur_ms - start_time <    60000 ? "0 min"
+         : cur_ms - start_time <   600000 ? "1 min"
+         : cur_ms - start_time <  3600000 ? "10 min"
+         : cur_ms - start_time < 36000000 ? "1 hour"
+         : cur_ms - start_time < 86400000 ? "10 hrs"
+         : "1 day");
+
+  SAYF(bSTG bV bSTOP " %6s paths : " cRST, tmp);
+
+  u32 prediction_interval =
+           cur_ms - start_time <   600000 ? 60
+         : cur_ms - start_time <  3600000 ? 600
+         : cur_ms - start_time < 36000000 ? 3600
+         : cur_ms - start_time < 86400000 ? 36000
+         : 86400;
+
+  u32 predicted_paths = queued_paths
+                        + (exp_total_paths - queued_paths)
+                           * (1 - pow(1.0 - (double) singletons
+                                          / (total_inputs * (exp_total_paths - queued_paths)
+                                             + singletons),
+                                      avg_exec * prediction_interval) );
+
+  SAYF("%-5s  " bSTG bV "\n",
+    (cur_ms - start_time < 60000) ? DI(queued_paths) : DI(predicted_paths));
 
   SAYF(bV bSTOP " last uniq crash : " cRST "%-34s ",
        DTD(cur_ms, last_crash_time));
+
+  SAYF(bSTG bV bSTOP "  total paths : " cRST "%-5s  " bSTG bV "\n",
+       DI(exp_total_paths));
+
+  SAYF(bV bSTOP "  last uniq hang : " cRST "%-34s ",
+       DTD(cur_ms, last_hang_time));
 
   sprintf(tmp, "%1.0Le", correctness);
   SAYF(bSTG bV bSTOP "  correctness : " cRST "%-5s  " bSTG bV "\n",
        tmp);
 
-  SAYF(bV bSTOP "  last uniq hang : " cRST "%-34s ",
-       DTD(cur_ms, last_hang_time));
+  sprintf(tmp, "%s%s%s" cRST " / %s%s",
+          unique_crashes ? cLRD : cRST,
+          DI(unique_crashes),
+          (unique_crashes >= KEEP_UNIQUE_CRASH) ? "+" : "",
+          DI(unique_hangs),
+          (unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
+
+  SAYF(bV bSTOP " uniq crash/hang : " cRST "%-42s ",
+       tmp);
 
   sprintf(tmp, "%1.0Le", difficulty);
   SAYF(bSTG bV bSTOP "   difficulty : " cRST "%-5s  " bSTG bV "\n",
-       tmp);
- 
-  sprintf(tmp, "%s%s", DI(unique_crashes),
-          (unique_crashes >= KEEP_UNIQUE_CRASH) ? "+" : "");
-  SAYF(bV bSTOP "    uniq crashes : " cRST "%s%-34s ",
-       unique_crashes ? cLRD : cRST, tmp);
-
-  sprintf(tmp, "%s%s", DI(unique_hangs),
-         (unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
-
-  SAYF(bSTG bV bSTOP "   uniq hangs : " cRST "%-5s  " bSTG bV "\n",
        tmp);
 
   SAYF(bVR bH bSTOP cCYA " cycle progress " bSTG bH20 bHB bH bSTOP cCYA
