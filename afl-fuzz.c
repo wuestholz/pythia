@@ -4109,6 +4109,8 @@ static void show_stats(void) {
 
   u32 singletons = 0;
   u32 doubletons = 0;
+
+  // TODO: Handle all kinds of overflows when computing "difficulty".
   int shannon = 0;
 
   struct queue_entry* q = queue;
@@ -4171,8 +4173,14 @@ static void show_stats(void) {
   SAYF(bV bSTOP " last uniq crash : " cRST "%-34s ",
        DTD(cur_ms, last_crash_time));
 
-  SAYF(bSTG bV bSTOP "  total paths : " cRST "%-5s  " bSTG bV "\n",
-       DI(exp_total_paths));
+  sprintf(tmp, "%0.01f%%", exp_total_paths > 0 
+                           ? (exp_total_paths != queued_paths)
+                             ? ((double)queued_paths) * 100 / exp_total_paths
+                             : 0.999 // In expectation, we never reach 100%
+                           : 0.0);
+
+  SAYF(bSTG bV bSTOP " path coverag : " cRST "%-5s  " bSTG bV "\n",
+       tmp);
 
   SAYF(bV bSTOP "  last uniq hang : " cRST "%-34s ",
        DTD(cur_ms, last_hang_time));
