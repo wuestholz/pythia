@@ -3579,7 +3579,7 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
 
         first_sum = log(total_inputs / (long double) (X_i - 1.0)) - first_sum_j + first_sum_i;
       } else
-        first_sum = log(total_inputs);
+        first_sum = log(total_inputs) + 0.577215664901532860606512090;
 
       fuzzability += first_sum * X_i / (long double) total_inputs;
 
@@ -3602,7 +3602,7 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
 
         first_sum = log(total_inputs / (long double) (X_i - 1.0)) - first_sum_j + first_sum_i;
       } else
-        first_sum = log(total_inputs);
+        first_sum = log(total_inputs) + 0.577215664901532860606512090;
 
       fuzzability += first_sum * (total_inputs - accounted_for) / (long double) total_inputs;
 
