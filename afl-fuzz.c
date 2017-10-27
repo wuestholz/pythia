@@ -3492,6 +3492,7 @@ static void write_stats_file(double bitmap_cvg, double stability, double eps) {
              "singletons        : %u\n"
              "doubletons        : %u\n"
              "fuzzability       : %Le\n"
+             "total_inputs      : %llu\n"
              "execs_since_crash : %llu\n"
              "exec_timeout      : %u\n"
              "afl_banner        : %s\n"
@@ -3504,8 +3505,8 @@ static void write_stats_file(double bitmap_cvg, double stability, double eps) {
              queued_variable, stability, bitmap_cvg, unique_crashes,
              unique_hangs, last_path_time / 1000, last_crash_time / 1000,
              last_hang_time / 1000, singletons, doubletons, fuzzability,
-             total_execs - last_crash_execs, exec_tmout, use_banner,
-             orig_cmdline);
+             total_inputs, total_execs - last_crash_execs, exec_tmout,
+             use_banner, orig_cmdline);
              /* ignore errors */
 
   fclose(f);
@@ -3612,19 +3613,20 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
     else if (singletons > 0) A = 2.0 / (long double) ((total_inputs - 1) * (singletons - 1) + 2);
     else                     A = 1.0;
 
-    if (A < 0.0 || A > 1.0) { WARNF("Overflow (2)"); exit(1); }
+    if (A >= 0.0 && A <= 1.0) {
 
-    long double second_sum = 0.0;
-    long double second_sum_i;
-    u64 r;
-    for (r = 1; r < total_inputs; r++){
-      second_sum_i = pow(1.0 - A, r) / (long double) r;
-      if (second_sum_i > 0.0)
-        second_sum += second_sum_i;
-      else { WARNF("OVERFLOW (3)"); exit(1); }
+      long double second_sum = 0.0;
+      long double second_sum_i;
+      u64 r;
+      for (r = 1; r < total_inputs; r++){
+        second_sum_i = pow(1.0 - A, r) / (long double) r;
+        if (second_sum_i > 0.0)
+          second_sum += second_sum_i;
+      }
+
+      fuzzability += (singletons / (long double) pow(1.0 - A, total_inputs)) * (-log(A) - second_sum) / (long double) total_inputs;
+
     }
-
-    fuzzability += (singletons / (long double) pow(1.0 - A, total_inputs)) * (-log(A) - second_sum) / (long double) total_inputs;
 
   }
 
