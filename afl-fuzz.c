@@ -189,6 +189,10 @@ EXP_ST u64 total_crashes,             /* Total number of crashes          */
            blocks_eff_select,         /* Blocks selected as fuzzable      */
            total_inputs;              /* Total inputs generated           */
 
+static long double fuzzability;
+static u32 fuzzability_increment = 1;
+static u32 fuzzability_counter = 0;
+
 static u32 subseq_tmouts;             /* Number of timeouts in a row      */
 
 static u8 *stage_name = "init",       /* Name of the current fuzz stage   */
@@ -3442,6 +3446,15 @@ static void write_stats_file(double bitmap_cvg, double stability, double eps) {
     last_eps  = eps;
   }
 
+  u32 singletons = 0;
+  u32 doubletons = 0;
+  struct queue_entry* q = queue;
+  while (q) {
+    if (q->n_fuzz == 1) singletons ++;
+    if (q->n_fuzz == 2) doubletons ++;
+    q = q->next;
+  }
+
   fprintf(f, "start_time        : %llu\n"
              "last_update       : %llu\n"
              "fuzzer_pid        : %u\n"
@@ -3464,6 +3477,9 @@ static void write_stats_file(double bitmap_cvg, double stability, double eps) {
              "last_path         : %llu\n"
              "last_crash        : %llu\n"
              "last_hang         : %llu\n"
+             "singletons        : %u\n"
+             "doubletons        : %u\n"
+             "fuzzability       : %Le\n"
              "execs_since_crash : %llu\n"
              "exec_timeout      : %u\n"
              "afl_banner        : %s\n"
@@ -3475,8 +3491,9 @@ static void write_stats_file(double bitmap_cvg, double stability, double eps) {
              max_depth, current_entry, pending_favored, pending_not_fuzzed,
              queued_variable, stability, bitmap_cvg, unique_crashes,
              unique_hangs, last_path_time / 1000, last_crash_time / 1000,
-             last_hang_time / 1000, total_execs - last_crash_execs,
-             exec_tmout, use_banner, orig_cmdline);
+             last_hang_time / 1000, singletons, doubletons, fuzzability,
+             total_execs - last_crash_execs, exec_tmout, use_banner,
+             orig_cmdline);
              /* ignore errors */
 
   fclose(f);
@@ -3520,11 +3537,91 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
     q = q->next;
   }
 
+  /* Fuzzability */
+  fuzzability_counter ++;
+  if (fuzzability_counter >= fuzzability_increment && total_inputs > 0 && queued_paths > 1) {
+
+    fuzzability = 0.0;
+    fuzzability_counter = 0;
+    if (fuzzability_increment < 30) fuzzability_increment *= 2;
+    else fuzzability_increment = 30; /* Compute about every 3 mins */
+
+    u64 X_i;
+    long double first_sum;
+    long double first_sum_i;
+    long double first_sum_j;
+    u64 accounted_for = 0;
+    struct queue_entry* q = queue;
+
+    while (q) {
+
+      X_i = q->n_fuzz;
+
+      if (X_i > 1)  {
+        first_sum_i = 1.0 / (long double)(12.0 * pow(X_i - 1.0, 2));
+        if (first_sum_i < 0.0 || first_sum_i > 1.0) first_sum_i = 0.0;
+
+        first_sum_j = 1/ (long double) (2.0 * X_i - 2.0);
+        if (first_sum_j < 0.0 || first_sum_j > 1.0) first_sum_j = 0.0;
+
+        first_sum = log(total_inputs / (long double) (X_i - 1.0)) - first_sum_j + first_sum_i;
+      } else
+        first_sum = log(total_inputs);
+
+      fuzzability += first_sum * X_i / (long double) total_inputs;
+
+      accounted_for += X_i;
+
+      q = q->next;
+
+    }
+
+    if (total_inputs - accounted_for > 0) {
+
+      X_i = total_inputs - accounted_for;
+
+      if (X_i > 1)  {
+        first_sum_i = 1.0 / (long double)(12.0 * pow(X_i - 1.0, 2));
+        if (first_sum_i < 0.0 || first_sum_i > 1.0) first_sum_i = 0.0;
+
+        first_sum_j = 1/ (long double) (2.0 * X_i - 2.0);
+        if (first_sum_j < 0.0 || first_sum_j > 1.0) first_sum_j = 0.0;
+
+        first_sum = log(total_inputs / (long double) (X_i - 1.0)) - first_sum_j + first_sum_i;
+      } else
+        first_sum = log(total_inputs);
+
+      fuzzability += first_sum * (total_inputs - accounted_for) / (long double) total_inputs;
+
+    }
+
+    long double A;
+    if (doubletons > 0)      A = 2.0 * doubletons / (long double) ((total_inputs - 1) * singletons + 2 * doubletons);
+    else if (singletons > 0) A = 2.0 / (long double) ((total_inputs - 1) * (singletons - 1) + 2);
+    else                     A = 1.0;
+
+    if (A < 0.0 || A > 1.0) { WARNF("Overflow (2)"); exit(1); }
+
+    long double second_sum = 0.0;
+    long double second_sum_i;
+    u64 r;
+    for (r = 1; r < total_inputs; r++){
+      second_sum_i = pow(1.0 - A, r) / (long double) r;
+      if (second_sum_i > 0.0)
+        second_sum += second_sum_i;
+      else { WARNF("OVERFLOW (3)"); exit(1); }
+    }
+
+    fuzzability += (singletons / (long double) pow(1.0 - A, total_inputs)) * (-log(A) - second_sum) / (long double) total_inputs;
+
+  }
+
   fprintf(plot_file, 
-          "%llu, %llu, %u, %u, %u, %u, %0.02f%%, %llu, %llu, %u, %0.02f, %u, %u, %llu\n",
+          "%llu, %llu, %u, %u, %u, %u, %0.02f%%, %llu, %llu, %u, %0.02f, %u, %u, %Le, %llu\n",
           get_cur_time() / 1000, queue_cycle - 1, current_entry, queued_paths,
           pending_not_fuzzed, pending_favored, bitmap_cvg, unique_crashes,
-          unique_hangs, max_depth, eps, singletons, doubletons, total_inputs); /* ignore errors */
+          unique_hangs, max_depth, eps, singletons, doubletons, fuzzability,
+          total_inputs); /* ignore errors */
 
   fflush(plot_file);
 }
@@ -4003,6 +4100,34 @@ static void show_stats(void) {
 
   t_bits = (MAP_SIZE << 3) - count_bits(virgin_bits);
 
+  long double correctness = 1.0;
+  u32 singletons = 0;
+  u32 doubletons = 0;
+  u32 exp_total_paths = queued_paths;
+
+  /* Correctness and  Path Coverage */
+  if (total_inputs > 0 && queued_paths > 1) {
+
+    struct queue_entry* q = queue;
+    while (q) {
+
+      if (q->n_fuzz == 1) singletons ++;
+      if (q->n_fuzz == 2) doubletons ++;
+
+      q = q->next;
+
+    }
+
+    if (doubletons > 0)
+      exp_total_paths += singletons * singletons / (2 * doubletons);
+    else
+      exp_total_paths += singletons * (singletons - 1) / 2;
+
+    correctness = (long double) singletons / total_inputs;
+
+  }
+
+
   /* Now, for the visuals... */
 
   if (clear_screen) {
@@ -4107,68 +4232,9 @@ static void show_stats(void) {
   SAYF(bSTG bV bSTOP "current paths : " cRST "%-5s  " bSTG bV "\n",
        DI(queued_paths));
 
-  u32 singletons = 0;
-  u32 doubletons = 0;
 
-  // TODO: Handle all kinds of overflows when computing "difficulty".
-  int shannon = 0;
-
-  struct queue_entry* q = queue;
-  while (q) {
-    if (q->n_fuzz == 1) singletons ++;
-    if (q->n_fuzz == 2) doubletons ++;
-
-    shannon -= q->n_fuzz * (LOG2(q->n_fuzz) - LOG2(total_inputs));
-
-    q = q->next;
-  }
-
-  u32 exp_total_paths = queued_paths;
-  if (doubletons > 0)
-    exp_total_paths += singletons * singletons / (2 * doubletons);
-  else
-    exp_total_paths += singletons * (singletons - 1) / 2;
-
-  long double difficulty = 1.0; 
-  long double correctness = 1.0;
-  if (total_inputs > 0 && queued_paths > 1) {
-    difficulty = ((long double) shannon / total_inputs) / (long double) LOG2(queued_paths);
-    correctness = (long double) singletons / total_inputs;
-  }
- 
   /* Highlight crashes in red if found, denote going over the KEEP_UNIQUE_CRASH
      limit with a '+' appended to the count. */
-
-  sprintf(tmp, "%s / %s / %s", DI(singletons), DI(doubletons), DI(total_inputs));
-  SAYF(bV bSTOP " prediction info : " cRST "%-34s ",
-       tmp);
-
-  sprintf(tmp, "%s",
-           cur_ms - start_time <    60000 ? "0 min"
-         : cur_ms - start_time <   600000 ? "1 min"
-         : cur_ms - start_time <  3600000 ? "10 min"
-         : cur_ms - start_time < 36000000 ? "1 hour"
-         : cur_ms - start_time < 86400000 ? "10 hrs"
-         : "1 day");
-
-  SAYF(bSTG bV bSTOP " %6s paths : " cRST, tmp);
-
-  u32 prediction_interval =
-           cur_ms - start_time <   600000 ? 60
-         : cur_ms - start_time <  3600000 ? 600
-         : cur_ms - start_time < 36000000 ? 3600
-         : cur_ms - start_time < 86400000 ? 36000
-         : 86400;
-
-  u32 predicted_paths = queued_paths
-                        + (exp_total_paths - queued_paths)
-                           * (1 - pow(1.0 - (double) singletons
-                                          / (total_inputs * (exp_total_paths - queued_paths)
-                                             + singletons),
-                                      avg_exec * prediction_interval) );
-
-  SAYF("%-5s  " bSTG bV "\n",
-    (cur_ms - start_time < 60000) ? DI(queued_paths) : DI(predicted_paths));
 
   SAYF(bV bSTOP " last uniq crash : " cRST "%-34s ",
        DTD(cur_ms, last_crash_time));
@@ -4185,22 +4251,37 @@ static void show_stats(void) {
   SAYF(bV bSTOP "  last uniq hang : " cRST "%-34s ",
        DTD(cur_ms, last_hang_time));
 
-  sprintf(tmp, "%1.0Le", correctness);
-  SAYF(bSTG bV bSTOP "  correctness : " cRST "%-5s  " bSTG bV "\n",
+   
+  sprintf(tmp, "%s%s", DI(unique_crashes),
+          (unique_crashes >= KEEP_UNIQUE_CRASH) ? "+" : "");
+
+  SAYF(bSTG bV bSTOP " uniq crashes : %s%-6s " bSTG bV "\n",
+       unique_crashes ? cLRD : cRST, tmp);
+
+  sprintf(tmp, "%Le", correctness);
+  SAYF(bV bSTOP "     correctness : " cRST "%-34s ", tmp);
+  
+  sprintf(tmp, "%s%s", DI(unique_hangs),
+         (unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
+
+  SAYF(bSTG bV bSTOP "   uniq hangs : " cRST "%-6s " bSTG bV "\n",
        tmp);
 
-  sprintf(tmp, "%s%s%s" cRST " / %s%s",
-          unique_crashes ? cLRD : cRST,
-          DI(unique_crashes),
-          (unique_crashes >= KEEP_UNIQUE_CRASH) ? "+" : "",
-          DI(unique_hangs),
-          (unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
+  sprintf(tmp, "%Le", fuzzability);
+  SAYF(bV bSTOP "     fuzzability : " cRST "%-34s ",
+         tmp);
+  
+  double effective_paths = exp(fuzzability);
+  if (effective_paths < 10)
+    sprintf(tmp, "%5.3f", exp(fuzzability));
+  else if (effective_paths < 100)
+    sprintf(tmp, "%5.2f", exp(fuzzability));
+  else if (effective_paths < 1000)
+    sprintf(tmp, "%5.1f", exp(fuzzability));
+  else  
+    sprintf(tmp, "%s", DI(exp(fuzzability)));
 
-  SAYF(bV bSTOP " uniq crash/hang : " cRST "%-42s ",
-       tmp);
-
-  sprintf(tmp, "%1.0Le", difficulty);
-  SAYF(bSTG bV bSTOP "   difficulty : " cRST "%-5s  " bSTG bV "\n",
+  SAYF(bSTG bV bSTOP "  effec paths : " cRST "%-5s  " bSTG bV "\n",
        tmp);
 
   SAYF(bVR bH bSTOP cCYA " cycle progress " bSTG bH20 bHB bH bSTOP cCYA
@@ -7312,7 +7393,8 @@ EXP_ST void setup_dirs_fds(void) {
 
   fprintf(plot_file, "# unix_time, cycles_done, cur_path, paths_total, "
                      "pending_total, pending_favs, map_size, unique_crashes, "
-                     "unique_hangs, max_depth, execs_per_sec, singletons, doubletons, tests_total\n");
+                     "unique_hangs, max_depth, execs_per_sec, singletons, "
+                     "doubletons, fuzzability, tests_total\n");
                      /* ignore errors */
 
 }
