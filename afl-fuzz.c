@@ -246,14 +246,14 @@ struct queue_entry {
       var_behavior,                   /* Variable behavior?               */
       favored,                        /* Currently favored?               */
       fs_redundant;                   /* Marked as redundant in the fs?   */
-  u64 n_fuzz;                         /* Number of fuzz, does not overflow */
 
   u32 bitmap_size,                    /* Number of bits set in bitmap     */
       exec_cksum;                     /* Checksum of the execution trace  */
 
   u64 exec_us,                        /* Execution time (us)              */
       handicap,                       /* Number of queue cycles behind    */
-      depth;                          /* Path depth                       */
+      depth,                          /* Path depth                       */
+      n_fuzz;                         /* Number of fuzz, does not overflow */
 
   u8* trace_mini;                     /* Trace bytes, if kept             */
   u32 tc_ref;                         /* Trace bytes ref count            */
@@ -3563,6 +3563,12 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
     long double first_sum;
     long double first_sum_i;
     long double first_sum_j;
+
+    long double first_sum_k = 1/(long double)(2 * total_inputs);
+    if (first_sum_k < 0.0 || first_sum_k > 1.0) first_sum_k = 0.0;
+    
+    long double first_sum_pre = log(total_inputs)  + first_sum_k;
+
     u64 accounted_for = 0;
     struct queue_entry* q = queue;
 
@@ -3571,15 +3577,15 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
       X_i = q->n_fuzz;
 
       if (X_i > 1)  {
-        first_sum_i = 1.0 / (long double)(12.0 * pow(X_i - 1.0, 2));
+        first_sum_i = 1.0 / (long double)(12 * (X_i - 1) * (X_i - 1));
         if (first_sum_i < 0.0 || first_sum_i > 1.0) first_sum_i = 0.0;
 
-        first_sum_j = 1/ (long double) (2.0 * X_i - 2.0);
+        first_sum_j = 1/ (long double) (2 * X_i - 2);
         if (first_sum_j < 0.0 || first_sum_j > 1.0) first_sum_j = 0.0;
 
-        first_sum = log(total_inputs / (long double) (X_i - 1.0)) - first_sum_j + first_sum_i;
+        first_sum = first_sum_pre - log(X_i - 1) - first_sum_j + first_sum_i;
       } else
-        first_sum = log(total_inputs) + 0.577215664901532860606512090;
+        first_sum = first_sum_pre + 0.577215664901532860606512090;
 
       fuzzability += first_sum * X_i / (long double) total_inputs;
 
@@ -3594,17 +3600,17 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
       X_i = total_inputs - accounted_for;
 
       if (X_i > 1)  {
-        first_sum_i = 1.0 / (long double)(12.0 * pow(X_i - 1.0, 2));
+        first_sum_i = 1.0 / (long double)(12 * (X_i - 1) * (X_i - 1));
         if (first_sum_i < 0.0 || first_sum_i > 1.0) first_sum_i = 0.0;
 
-        first_sum_j = 1/ (long double) (2.0 * X_i - 2.0);
+        first_sum_j = 1/ (long double) (2 * X_i - 2);
         if (first_sum_j < 0.0 || first_sum_j > 1.0) first_sum_j = 0.0;
 
-        first_sum = log(total_inputs / (long double) (X_i - 1.0)) - first_sum_j + first_sum_i;
+        first_sum = first_sum_pre - log(X_i - 1) - first_sum_j + first_sum_i;
       } else
-        first_sum = log(total_inputs) + 0.577215664901532860606512090;
+        first_sum = first_sum_pre + 0.577215664901532860606512090;
 
-      fuzzability += first_sum * (total_inputs - accounted_for) / (long double) total_inputs;
+      fuzzability += first_sum * X_i / (long double) total_inputs;
 
     }
 
@@ -3620,7 +3626,7 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
       u64 r;
       for (r = 1; r < total_inputs; r++){
         second_sum_i = pow(1.0 - A, r) / (long double) r;
-        if (second_sum_i > 0.0)
+        if (second_sum_i > 0.0 && second_sum_i <= 1.0)
           second_sum += second_sum_i;
       }
 
