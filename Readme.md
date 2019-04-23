@@ -12,11 +12,6 @@
 │     fuzzability : 4.415707e-01                       │  effec paths : 1.555  │
 </pre>
 
-Further reading:
-* Marcel Böhme. 2018. [Software Testing as Species Discovery](https://mboehme.github.io/paper/TOSEM18.pdf). ACM TOSEM.
-* Marcel Böhme. 2019. [Assurances in Software Testing: A Roadmap](https://arxiv.org/abs/1807.10255). ACM/IEEE ICSE (NIER track)
-* Marcel Bohme. 2019. [When to Stop Fuzzing](https://www.fuzzingbook.org/html/WhenToStopFuzzing.html) -- Jupyter notebook tutorial / interactive book chapter in "[Generating Software Tests](https://www.fuzzingbook.org)" by A. Zeller, R. Gopinath, M. Böhme, G. Fraser, and C. Holler.
-
 ## Overview
 Pythia provides *statistical correctness guarantees* for fuzzing campaigns (correctness), and quantifies *how difficult* it is to discover paths in a program (difficulty). Pythia also allows to determine the *progress* of the fuzzing campaign *towards completion* (path coverage) and can *predict* the number of paths discovered at a certain time in the future. Once you reach a "path coverage" of 99%, you can normally abort the fuzzing campaign without expecting too many new discoveries. Once you reach a "correctness" of 1e-8, we expect that it would take about 100 million new executions from the last discovery until the next discovery of a new path / unique crash.
 
@@ -40,5 +35,17 @@ Pythia provides *statistical correctness guarantees* for fuzzing campaigns (corr
 
 If there is enough interest, I'll put up a technical report explaining the research behind this. Also, let me know if you want to build on this research and cite my paper :) <br/>
 The central ideas also work for Libfuzzer, syzcaller, Peach, CSmith, and many other fuzzers (except for fuzzers based on symbolic execution) and other program analysis (not only for path coverage).
+
+## Further reading
+* Marcel Böhme. 2018. [Software Testing as Species Discovery](https://mboehme.github.io/paper/TOSEM18.pdf). ACM TOSEM
+  * *Discusses the analogy between bug finding in testing and ecology.*
+  * *Introduces the biostatistical framework and relevant estimators.*
+  * *Provides an evaluation of Pythia.*
+* Marcel Böhme. 2019. [Assurances in Software Testing: A Roadmap](https://arxiv.org/abs/1807.10255). ACM/IEEE ICSE (NIER track) 
+  * *Abridged version (6 pages). Discusses the larger vision, opportunities, and open challenges.*
+* Marcel Bohme. 2019. [When to Stop Fuzzing](https://www.fuzzingbook.org/html/WhenToStopFuzzing.html); book chapter in "[Generating Software Tests](https://www.fuzzingbook.org)" by A. Zeller, R. Gopinath, M. Böhme, G. Fraser, and C. Holler
+  * *A tutorial-style interactive book chapter written as Jupyter notebook.*
+  * *Play with the statistical techniques behind the estimation and extrapolation that is implemented in Pythia.*
+  * *Learn more about the central ideas.*
 
 Cheers - Marcel
