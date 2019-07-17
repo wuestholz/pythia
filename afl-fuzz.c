@@ -168,6 +168,7 @@ EXP_ST u32 queued_paths,              /* Total number of queued testcases */
            useless_at_start,          /* Number of useless starting paths */
            var_byte_count,            /* Bitmap bytes with var behavior   */
            current_entry,             /* Current queue entry ID           */
+           prev_exec_cksum;           /* Checksum of the previous/selected execution trace */
            havoc_div = 1;             /* Cycle count divisor for havoc    */
 
 EXP_ST u64 total_crashes,             /* Total number of crashes          */
@@ -3137,13 +3138,15 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
   /* Keep track of singletons and doubletons */
   u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
-  struct queue_entry* q = queue;
-  while (q) {
-    if (q->exec_cksum == cksum)
-      q->n_fuzz = q->n_fuzz + 1;
-
-    q = q->next;
-
+  if (cksum != prev_exec_cksum) {
+    struct queue_entry* q = queue;
+    while (q) {
+      if (q->exec_cksum == cksum)
+        q->n_fuzz = q->n_fuzz + 1;
+    
+      q = q->next;
+    
+    }
   }
 
 
@@ -5333,6 +5336,7 @@ static u8 fuzz_one(char** argv) {
   orig_hit_cnt = queued_paths + unique_crashes;
 
   prev_cksum = queue_cur->exec_cksum;
+  prev_exec_cksum = prev_cksum;
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
 
@@ -6955,6 +6959,7 @@ static void sync_fuzzers(char** argv) {
         if (stop_soon) return;
 
         syncing_party = sd_ent->d_name;
+        prev_exec_cksum = 0;
         u8 saved = save_if_interesting(argv, mem, st.st_size, fault);
         queued_imported += saved;
         syncing_party = 0;
