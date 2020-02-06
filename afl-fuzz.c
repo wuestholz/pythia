@@ -3138,7 +3138,41 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
   /* Keep track of singletons and doubletons */
   u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
-  if (cksum != prev_exec_cksum) {
+  u8 update_strategy = 2;
+  u8 should_update = 1;
+  switch (update_strategy) {
+    case 1:
+      // We ignore self-transitions.
+      should_update = (cksum != prev_exec_cksum);
+      break;
+    case 2:
+      // After a burn-in period, we ignore transitions from rare inputs to rare or
+      // abundant inputs.
+      {
+        u64 prev_fuzz = 0;
+        u64 new_fuzz = 0;
+        u64 tot_fuzz = 0;
+        struct queue_entry* q = queue;
+        while (q) {
+          u64 cf = q->n_fuzz;
+          if (q->exec_cksum == prev_exec_cksum) {
+            prev_fuzz += cf;
+          }
+          if (q->exec_cksum == cksum) {
+            new_fuzz += cf;
+          }
+          tot_fuzz += cf;
+          q = q->next;
+        }
+        u64 k = 2;
+        u8 prev_is_rare = (1 <= prev_fuzz && prev_fuzz <= k);
+        u8 is_new_discovery = (new_fuzz < 1);
+        should_update = (tot_fuzz < 65536 || is_new_discovery || !prev_is_rare);
+      }
+      break;
+  }
+
+  if (should_update) {
     struct queue_entry* q = queue;
     while (q) {
       if (q->exec_cksum == cksum)
